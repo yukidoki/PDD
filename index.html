@@ -380,8 +380,8 @@
         }
     });
 
-    // 店铺ID映射表
-    const SHOP_MAPPING = {
+    // 店铺ID映射表（9位短ID，兼容旧文件命名）
+    const SHORT_ID_MAPPING = {
         "0b486b2bb": "拼多多CEBRODZ休闲服装旗舰店", "006e1a86e": "拼多多AEMAPE腾飞专卖店", "87acb74e6": "拼多多Cebrodz潮服旗舰店",
         "eec179e59": "拼多多Cebrodz潮流男装旗舰店", "e890152a9": "拼多多Cebrodz潮牌服饰旗舰店", "7b4e2016d": "拼多多Cebrodz服饰官方旗舰店",
         "a1e1f56af": "拼多多CEBRODZ服饰配件官方旗舰店", "b68e61af4": "拼多多Cebrodz服饰配件旗舰店", "63749dd88": "拼多多CEBRODZ服饰旗舰店",
@@ -392,8 +392,84 @@
         "a520ed520": "拼多多Cebrodz男装旗舰店", "7bdf0bf05": "拼多多CEBRODZ男士服装官方旗舰店", "db7aa7cb7": "拼多多Cebrodz旗舰店",
         "bbb25ae7b": "拼多多Cebrodz鞋服官方旗舰店", "6e2517a4c": "拼多多CEBRODZ休闲服官方旗舰店", "fa0d64f7a": "拼多多Cebrodz休闲服旗舰店",
         "5d8f997c1": "拼多多Cebrodz休闲服饰旗舰店", "7dec7d4e2": "拼多多Cebrodz休闲鞋服官方旗舰店", "ac113e744": "拼多多JEEP SPIRIT远飞双航专卖店",
-        "15d9eaea5": "拼多多CEBRODZ休闲服饰官方旗舰店", 
+        "15d9eaea5": "拼多多CEBRODZ休闲服饰官方旗舰店",
     };
+
+    // 店铺ID映射表（32位完整ID，优先级最高）
+    const FULL_ID_MAPPING = {
+        "3bb0577093ef01506977ed4e4ce8f000": "CEBRODZ休闲服装官方旗舰店",
+        "0b486b2bbcfaa106d48c1ee5fd2a88e5": "CEBRODZ休闲服装旗舰店",
+        "15d9eaea5ab3472aeea98ed2bd9eca6f": "CEBRODZ休闲服饰官方旗舰店",
+        "5f8de86b3157dc5965df31a1dcc893cc": "CEBRODZ服饰旗舰店",
+        "a1e1f56afaf4174a621fee5ba3a740d8": "CEBRODZ服饰配件官方旗舰店",
+        "7bdf0bf0576bcefcfbb2dd18e370ec4e": "CEBRODZ男士服装官方旗舰店",
+        "e5bc508f3def283d5f1d3d1aef935ebf": "CEBRODZ男裤官方旗舰店",
+        "3cd28740a8e2689377cca519cf64d2f5": "CEBRODZ男裤旗舰店",
+        "fa0d64f7a0de35fcbac974aea6e237ab": "Cebrodz休闲服旗舰店",
+        "d4d0f801ba1e84e4af1b2d20954fac85": "Cebrodz官方旗舰店",
+        "db7aa7cb7194940e10e18ea9e5238bf8": "Cebrodz旗舰店",
+        "d84b40d4f2468b6fc962d3e645668785": "Cebrodz服装旗舰店",
+        "b68e61af430e95b98caf2c2eab47ab8f": "Cebrodz服饰配件旗舰店",
+        "87acb74e6c7e448363dc7ad8360684b5": "Cebrodz潮服旗舰店",
+        "eec179e599eca2a4778d181b53f1fde8": "Cebrodz潮流男装旗舰店",
+        "1e20db540887b6f44ac7b8c4788d6ada": "Cebrodz男士服饰旗舰店",
+        "4f6ae0ac75ee177da003d611d1b5de8c": "Cebrodz男女装官方旗舰店",
+        "d291b05c7837202f840cfb33870972b0": "Cebrodz男装官方旗舰店",
+        "a520ed520b323ca35228520c5aea97da": "Cebrodz男装旗舰店",
+        "4ecc781fd11fef934e22587d522c281e": "GS盛汇生博专卖店"
+    };
+
+    // 名称归一化：去空白、去“拼多多”前缀、转小写，用于店铺名比对
+    function normalizeShopName(str) {
+        return String(str || '').replace(/\s+/g, '').replace(/^拼多多/, '').toLowerCase();
+    }
+
+    // 店铺名称索引：支持“以店铺名称开头”的文件名识别（长名称优先匹配）
+    const SHOP_NAME_INDEX = (function () {
+        const map = new Map();
+        const add = (name) => {
+            const key = normalizeShopName(name);
+            if (!key) return;
+            const exist = map.get(key);
+            // 同名时优先保留不带“拼多多”前缀的写法
+            if (!exist || (exist.indexOf('拼多多') === 0 && name.indexOf('拼多多') !== 0)) map.set(key, name);
+        };
+        Object.values(SHORT_ID_MAPPING).forEach(add);
+        Object.values(FULL_ID_MAPPING).forEach(add);
+        return Array.from(map.entries())
+            .map(item => ({ key: item[0], name: item[1] }))
+            .sort((a, b) => b.key.length - a.key.length);
+    })();
+
+    // 店铺识别：完整ID > 9位短ID > 文件名以店铺名称开头
+    function resolveShopName(filename) {
+        const base = String(filename || '').replace(/^.*[\\\/]/, '').replace(/\.csv$/i, '').trim();
+        const lowerBase = base.toLowerCase();
+
+        // 1. 完整ID（32位）：开头匹配或包含匹配
+        const fullIds = Object.keys(FULL_ID_MAPPING);
+        for (const id of fullIds) {
+            if (lowerBase.indexOf(id.toLowerCase()) === 0) return FULL_ID_MAPPING[id];
+        }
+        for (const id of fullIds) {
+            if (lowerBase.indexOf(id.toLowerCase()) !== -1) return FULL_ID_MAPPING[id];
+        }
+
+        // 2. 9位短ID（历史规则）
+        const shortId = base.substring(0, 9);
+        if (SHORT_ID_MAPPING[shortId]) {
+            // 若该店铺已有完整ID记录，使用完整ID对应的名称，保证同一店铺名称一致
+            const matchedFullId = fullIds.find(id => id.toLowerCase().indexOf(shortId.toLowerCase()) === 0);
+            return matchedFullId ? FULL_ID_MAPPING[matchedFullId] : SHORT_ID_MAPPING[shortId];
+        }
+
+        // 3. 以店铺名称开头，例如：CEBRODZ潮流男装旗舰店_Cebrodz潮流男装
+        const normBase = normalizeShopName(base);
+        const hit = SHOP_NAME_INDEX.find(s => normBase.indexOf(s.key) === 0);
+        if (hit) return hit.name;
+
+        return `未知店铺 (${base.substring(0, 20) || '无名称'})`;
+    }
 
     // 数据存储
     let globalShopResults = [];
@@ -668,8 +744,10 @@
     }
 
     function processFileData(filename, data) {
-        const shopId = filename.substring(0, 9);
-        const shopName = SHOP_MAPPING[shopId] || `未知店铺 (${shopId})`;
+        const shopName = resolveShopName(filename);
+        if (shopName.indexOf('未知店铺') === 0) {
+            addLog('警告', '未识别', `${filename} 未匹配到店铺，请检查文件名或补充映射`);
+        }
 
         const validRows = data.filter(row => {
             const note = (row['商家备注'] || '').toString().toLowerCase();
